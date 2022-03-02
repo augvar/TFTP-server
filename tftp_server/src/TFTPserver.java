@@ -1,13 +1,16 @@
+import java.io.IOException;
+import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.net.SocketException;
+import java.nio.ByteBuffer;
 
 public class TFTPserver {
 	public static final int TFTPPORT = 4970;
 	public static final int BUFSIZE = 516;
-	public static final String READDIR = "/home/username/read/"; //custom address at your PC
-	public static final String WRITEDIR = "/home/username/write/"; //custom address at your PC
+	public static final String READDIR = "./TFTP-server/write/"; //custom address at your PC
+	public static final String WRITEDIR = "./TFTP-server/read/"; //custom address at your PC
 	// OP codes
 	public static final int OP_RRQ = 1;
 	public static final int OP_WRQ = 2;
@@ -93,12 +96,18 @@ public class TFTPserver {
 	 */
 	private InetSocketAddress receiveFrom(DatagramSocket socket, byte[] buf) {
 		// Create datagram packet
+		DatagramPacket datagramPacket = new DatagramPacket(buf, buf.length);
 		
 		// Receive packet
+		try {
+			socket.receive(datagramPacket);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 		
 		// Get client address and port from the packet
-		
-		return null;//socketAddress;
+	
+		return new InetSocketAddress(datagramPacket.getAddress(), datagramPacket.getPort()); //socketAddress;
 	}
 
 	/**
@@ -111,7 +120,10 @@ public class TFTPserver {
 
 	private int ParseRQ(byte[] buf, StringBuffer requestedFile) {
 		// See "TFTP Formats" in TFTP specification for the RRQ/WRQ request contents
-		return 1; //opcode;
+		ByteBuffer wrap = ByteBuffer.wrap(buf);
+		short opcode = wrap.getShort();
+		
+		return opcode; //opcode;
 	}
 
 	/**
