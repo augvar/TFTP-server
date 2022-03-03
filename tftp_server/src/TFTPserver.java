@@ -6,161 +6,177 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
 
+/**
+ * .
+ */
 public class TFTPserver {
-	public static final int TFTPPORT = 4970;
-	public static final int BUFSIZE = 516;
-	public static final String READDIR = "./TFTP-server/write/"; //custom address at your PC
-	public static final String WRITEDIR = "./TFTP-server/read/"; //custom address at your PC
-	// OP codes
-	public static final int OP_RRQ = 1;
-	public static final int OP_WRQ = 2;
-	public static final int OP_DAT = 3;
-	public static final int OP_ACK = 4;
-	public static final int OP_ERR = 5;
+  public static final int TFTPPORT = 8888;
+  public static final int BUFSIZE = 516;
+  public static final String READDIR = "./TFTP-server/write/"; //custom address at your PC
+  public static final String WRITEDIR = "./TFTP-server/read/"; //custom address at your PC
+  // OP codes
+  public static final int OP_RRQ = 1;
+  public static final int OP_WRQ = 2;
+  public static final int OP_DAT = 3;
+  public static final int OP_ACK = 4;
+  public static final int OP_ERR = 5;
 
-	public static void main(String[] args) {
-		if (args.length > 0) {
-			System.err.printf("usage: java %s\n", TFTPserver.class.getCanonicalName());
-			System.exit(1);
-		} 
+  /**
+   * .
+   */
+  public static void main(String[] args) {
+    if (args.length > 0) {
+      System.err.printf("usage: java %s\n", TFTPserver.class.getCanonicalName());
+      System.exit(1);
+    } 
 
-		//Starting the server
-		try {
-			TFTPserver server= new TFTPserver();
-			server.start();
-		} catch (SocketException e) {
-			e.printStackTrace();
-		}
-	}
-	
-	private void start() throws SocketException {
-		byte[] buf= new byte[BUFSIZE];
+    //Starting the server
+    try {
+      TFTPserver server = new TFTPserver();
+      server.start();
+    } catch (SocketException e) {
+      e.printStackTrace();
+    }
+  }
+  
+  private void start() throws SocketException {
+    byte[] buf = new byte[BUFSIZE];
 
-		// Create socket
-		DatagramSocket socket= new DatagramSocket(null);
-		
-		// Create local bind point 
-		SocketAddress localBindPoint= new InetSocketAddress(TFTPPORT);
-		socket.bind(localBindPoint);
+    // Create socket
+    DatagramSocket socket = new DatagramSocket(null);
+    
+    // Create local bind point 
+    SocketAddress localBindPoint = new InetSocketAddress(TFTPPORT);
+    socket.bind(localBindPoint);
 
-		System.out.printf("Listening at port %d for new requests\n", TFTPPORT);
+    System.out.printf("Listening at port %d for new requests\n", TFTPPORT);
 
-		// Loop to handle client requests 
-		while (true) {        
-			
-			final InetSocketAddress clientAddress = receiveFrom(socket, buf);
-			
-			// If clientAddress is null, an error occurred in receiveFrom()
-			if (clientAddress == null)
-				continue;
+    // Loop to handle client requests 
+    while (true) {        
+      
+      final InetSocketAddress clientAddress = receiveFrom(socket, buf);
+      
+      // If clientAddress is null, an error occurred in receiveFrom()
+      if (clientAddress == null) {
+        continue;
+      }
+      final StringBuffer requestedFile = new StringBuffer();
+      final int reqtype = parseRQ(buf, requestedFile);
 
-			final StringBuffer requestedFile= new StringBuffer();
-			final int reqtype = ParseRQ(buf, requestedFile);
+      new Thread() {
+        public void run() {
+          try {
+            DatagramSocket sendSocket = new DatagramSocket(0);
 
-			new Thread() {
-				public void run() {
-					try {
-						DatagramSocket sendSocket= new DatagramSocket(0);
+            // Connect to client
+            sendSocket.connect(clientAddress);
 
-						// Connect to client
-						sendSocket.connect(clientAddress);						
-
-						System.out.printf("%s request for %s from %s using port %d\n",
-								(reqtype == OP_RRQ)?"Read":"Write",
-								clientAddress.getHostName(), clientAddress.getPort(), clientAddress.getAddress());  
-								
-						// Read request
-						if (reqtype == OP_RRQ) {      
-							requestedFile.insert(0, READDIR);
-							HandleRQ(sendSocket, requestedFile.toString(), OP_RRQ);
+            System.out.printf("%s request for %s from %s using port %d\n",
+                (reqtype == OP_RRQ) ? "Read" : "Write",
+                clientAddress.getHostName(), clientAddress.getPort(), clientAddress.getAddress());  
+                
+            // Read request
+            if (reqtype == OP_RRQ) {      
+              requestedFile.insert(0, READDIR);
+              handleRQ(sendSocket, requestedFile.toString(), OP_RRQ);
             // Write request
-						} else {  
-						                     
-							requestedFile.insert(0, WRITEDIR);
-							HandleRQ(sendSocket,requestedFile.toString(),OP_WRQ);  
-						}
-						sendSocket.close();
-					} catch (SocketException e) {
-						e.printStackTrace();
-					}
-				}
-			}.start();
-		}
-	}
-	
-	/**
-	 * Reads the first block of data, i.e., the request for an action (read or write).
-	 * @param socket (socket to read from)
-	 * @param buf (where to store the read data)
-	 * @return socketAddress (the socket address of the client)
-	 */
-	private InetSocketAddress receiveFrom(DatagramSocket socket, byte[] buf) {
-		// Create datagram packet
-		DatagramPacket datagramPacket = new DatagramPacket(buf, buf.length);
-		
-		// Receive packet
-		try {
-			socket.receive(datagramPacket);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		
-		// Get client address and port from the packet
-	
-		return new InetSocketAddress(datagramPacket.getAddress(), datagramPacket.getPort()); //socketAddress;
-	}
+            } else {  
+                                 
+              requestedFile.insert(0, WRITEDIR);
+              handleRQ(sendSocket,requestedFile.toString(),OP_WRQ);  
+            }
+            sendSocket.close();
+          } catch (SocketException e) {
+            e.printStackTrace();
+          }
+        }
+      }.start();
+    }
+  }
+  
+  /**
+   * Reads the first block of data, i.e., the request for an action (read or write).
+   * @param socket (socket to read from)
+   * @param buf (where to store the read data)
+   * @return socketAddress (the socket address of the client)
+   */
+  private InetSocketAddress receiveFrom(DatagramSocket socket, byte[] buf) {
+    // Create datagram packet
+    DatagramPacket datagramPacket = new DatagramPacket(buf, buf.length);
+    
+    // Receive packet
+    try {
+      socket.receive(datagramPacket);
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    
+    // Get client address and port from the packet
+  
+    return new InetSocketAddress(datagramPacket.getAddress(), datagramPacket.getPort());
+  }
 
-	/**
-	 * Parses the request in buf to retrieve the type of request and requestedFile
-	 * 
-	 * @param buf (received request)
-	 * @param requestedFile (name of file to read/write)
-	 * @return opcode (request type: RRQ or WRQ)
-	 */
+  /**
+   * Parses the request in buf to retrieve the type of request and requestedFile.
+   * 
+   * @param buf (received request)
+   * @param requestedFile (name of file to read/write)
+   * @return opcode (request type: RRQ or WRQ)
+   */
 
-	private int ParseRQ(byte[] buf, StringBuffer requestedFile) {
-		// See "TFTP Formats" in TFTP specification for the RRQ/WRQ request contents
-		ByteBuffer wrap = ByteBuffer.wrap(buf);
-		short opcode = wrap.getShort();
-		
-		return opcode; //opcode;
-	}
+  private int parseRQ(byte[] buf, StringBuffer requestedFile) {
+    // See "TFTP Formats" in TFTP specification for the RRQ/WRQ request contents
+    ByteBuffer wrap = ByteBuffer.wrap(buf);
+    short opcode = wrap.getShort();
+    
+    for (int i = 2; i < buf.length; i++) {
+      if (buf[i] == 0) {
+        System.out.println(requestedFile);
+        return opcode;
+      }
+      requestedFile.append(buf[i]);
+    }
+    
+    System.out.println(opcode);
+    
+    return 0; //opcode;
+  }
 
-	/**
-	 * Handles RRQ and WRQ requests 
-	 * 
-	 * @param sendSocket (socket used to send/receive packets)
-	 * @param requestedFile (name of file to read/write)
-	 * @param opcode (RRQ or WRQ)
-	 */
-	private void HandleRQ(DatagramSocket sendSocket, String requestedFile, int opcode) {		
-		if(opcode == OP_RRQ) {
-			// See "TFTP Formats" in TFTP specification for the DATA and ACK packet contents
-			boolean result = send_DATA_receive_ACK();
-		
+  /**
+   * Handles RRQ and WRQ requests.
+   * 
+   * @param sendSocket (socket used to send/receive packets)
+   * @param requestedFile (name of file to read/write)
+   * @param opcode (RRQ or WRQ)
+   */
+  private void handleRQ(DatagramSocket sendSocket, String requestedFile, int opcode) {
+    if (opcode == OP_RRQ) {
+      // See "TFTP Formats" in TFTP specification for the DATA and ACK packet contents
+      boolean result = send_Data_receive_Ack();
+    
     } else if (opcode == OP_WRQ) {
-			boolean result = receive_DATA_send_ACK();
-		
+      boolean result = receive_Data_send_Ack();
+    
     } else {
-			System.err.println("Invalid request. Sending an error packet.");
-			// See "TFTP Formats" in TFTP specification for the ERROR packet contents
-			send_ERR();
-			return;
-		}	
-	}
-	
-	/**
-	To be implemented
-	*/
-	private boolean send_DATA_receive_ACK() {
-		return true;
-	}
-	
-	private boolean receive_DATA_send_ACK() {
-		return true;
-	}
-	
-	private void send_ERR() {
+      System.err.println("Invalid request. Sending an error packet.");
+      // See "TFTP Formats" in TFTP specification for the ERROR packet contents
+      send_Err();
+      return;
+    }
+  }
+  
+  /**
+  To be implemented.
+  */
+  private boolean send_Data_receive_Ack() {
+    return true;
+  }
+  
+  private boolean receive_Data_send_Ack() {
+    return true;
+  }
+  
+  private void send_Err() {
 
-	}
+  }
 }
