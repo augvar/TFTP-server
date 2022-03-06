@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
+import java.util.List;
 
 /**
  * .
@@ -129,13 +130,18 @@ public class TFTPserver {
     ByteBuffer wrap = ByteBuffer.wrap(buf);
     short opcode = wrap.getShort();
     
+    String file;
     for (int i = 2; i < buf.length; i++) {
       if (buf[i] == 0) {
         System.out.println(requestedFile);
-        return opcode;
+        break;
       }
+      Integer fileName =+ buf[i];
+      
+      file += new String(fileName.byteValue());
       requestedFile.append(buf[i]);
     }
+    
     
     System.out.println(opcode);
     
