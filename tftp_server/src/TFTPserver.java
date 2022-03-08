@@ -1,3 +1,6 @@
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -5,6 +8,9 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -13,9 +19,9 @@ import java.util.List;
 public class TFTPserver {
   public static final int TFTPPORT = 8888;
   public static final int BUFSIZE = 516;
-  public static final String READDIR = "./TFTP-server/write/"; //custom address at your PC
-  public static final String WRITEDIR = "./TFTP-server/read/"; //custom address at your PC
-  // OP codes
+  public static final String READDIR = Paths.get("./read").toString() + "/"; 
+  public static final String WRITEDIR = "./TFTP-server/write/"; //custom address at your PC
+  // OP codes 
   public static final int OP_RRQ = 1;
   public static final int OP_WRQ = 2;
   public static final int OP_DAT = 3;
@@ -74,7 +80,7 @@ public class TFTPserver {
 
             System.out.printf("%s request for %s from %s using port %d\n",
                 (reqtype == OP_RRQ) ? "Read" : "Write",
-                clientAddress.getHostName(), clientAddress.getPort(), clientAddress.getAddress());  
+                clientAddress.getHostName(), clientAddress.getAddress(), clientAddress.getPort());  
                 
             // Read request
             if (reqtype == OP_RRQ) {      
@@ -113,7 +119,6 @@ public class TFTPserver {
     }
     
     // Get client address and port from the packet
-  
     return new InetSocketAddress(datagramPacket.getAddress(), datagramPacket.getPort());
   }
 
@@ -130,22 +135,28 @@ public class TFTPserver {
     ByteBuffer wrap = ByteBuffer.wrap(buf);
     short opcode = wrap.getShort();
     
-    String file;
+    String file = "";
+    String mode = "";
+    int index = 0;
     for (int i = 2; i < buf.length; i++) {
       if (buf[i] == 0) {
-        System.out.println(requestedFile);
+        file = new String(buf, 2, i - 2);
+        index = i;
+        requestedFile.append(file);
+        System.out.println("Filename: " + file);
         break;
       }
-      Integer fileName =+ buf[i];
-      
-      file += new String(fileName.byteValue());
-      requestedFile.append(buf[i]);
+    }
+
+    for (int i = index + 1; i < buf.length; i++) {
+      if (buf[i] == 0) {
+        mode = new String(buf, index + 1, i - (index + 1));
+        System.out.println("Mode: " + mode);
+        return opcode;
+      }
     }
     
-    
-    System.out.println(opcode);
-    
-    return 0; //opcode;
+    return 0;
   }
 
   /**
@@ -156,10 +167,42 @@ public class TFTPserver {
    * @param opcode (RRQ or WRQ)
    */
   private void handleRQ(DatagramSocket sendSocket, String requestedFile, int opcode) {
-    if (opcode == OP_RRQ) {
-      // See "TFTP Formats" in TFTP specification for the DATA and ACK packet contents
-      boolean result = send_Data_receive_Ack();
-    
+    if (opcode == OP_RRQ) {    
+      byte[] allData = readBytesFromFile(requestedFile);
+      if (allData == null) {
+        System.out.println("File empty.");
+        //TODO: error packet?
+      } else {
+        List<byte[]> splitData = new ArrayList<>();
+
+        if (allData.length > 512) {
+          int index = 0;
+          for (int i = 0; i < allData.length; i++) {
+            if (i % 512 == 0) {
+              splitData.add(Arrays.copyOfRange(allData, index, i));
+              index += 512;
+            }
+          }
+        } else {
+          splitData.add(0, allData);
+        }
+        
+        System.out.println("File content: \n");
+
+        boolean result = true;
+        for (int i = 0; i < splitData.size(); i++) {
+          System.out.println(new String(splitData.get(i)));
+          byte[] p = createDataResponsePacket(splitData.get(i), OP_DAT, i + 1);
+          if (result) {
+            result = send_Data_receive_Ack(sendSocket, p);
+          } else {
+            System.out.println("Oh no its stupid.");
+          }
+        }
+        // byte[] p = createDataResponsePacket(allData, OP_DAT, 1);
+        // send_Data_receive_Ack(sendSocket, p);
+      }
+      
     } else if (opcode == OP_WRQ) {
       boolean result = receive_Data_send_Ack();
     
@@ -170,12 +213,68 @@ public class TFTPserver {
       return;
     }
   }
+
+  /**
+  * Reads and returns a bytearray with 
+  * all bytes from a specified file.
+  */
+  private byte[] readBytesFromFile(String fileName) {
+    try {
+      File file = new File(fileName);
+      FileInputStream fileInput = new FileInputStream(fileName);
+      byte[] content = new byte[(int)file.length()];
+
+      fileInput.read(content);
+      fileInput.close();
+
+      return content;
+
+    } catch (FileNotFoundException e) {
+      System.out.println("File not found.");
+    } catch (IOException e) {
+      System.out.println("Something went wrong.");
+    }
+    return null;
+  }
+
+  /**
+   * Create a data response packet and 
+   * return as byte[].
+  */
+  private byte[] createDataResponsePacket(byte[] data, int opcode, int block) {
+    if (data.length < 512 && opcode == OP_DAT) {
+      ByteBuffer response = ByteBuffer.allocate(data.length + 4);
+      response.putShort((byte)opcode)
+              .putShort((byte)block)
+              .put(data, 0, data.length);
+      return response.array();
+    }
+    System.out.println("Packet could not be created.");
+    return null;
+  }
   
   /**
   To be implemented.
   */
-  private boolean send_Data_receive_Ack() {
-    return true;
+  private boolean send_Data_receive_Ack(DatagramSocket sendSocket, byte[] dataPackage) {
+    try {
+      DatagramPacket dp = new DatagramPacket(dataPackage, dataPackage.length);
+      sendSocket.send(dp);
+
+      // Recieve
+      byte[] ack = new byte[BUFSIZE];
+      sendSocket.receive(new DatagramPacket(ack, ack.length));
+      ByteBuffer a = ByteBuffer.wrap(ack);
+    
+      System.out.println("\nOpcode: " + a.getShort()
+                      +  "\nBlock number: " + a.getShort());
+      
+      return true;
+      
+    } catch (IOException e) {
+      System.out.println("Could not send package!!!! Idjit...");
+    }
+    return false;
   }
   
   private boolean receive_Data_send_Ack() {
