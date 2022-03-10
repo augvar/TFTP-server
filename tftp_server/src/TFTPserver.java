@@ -1,6 +1,7 @@
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -20,13 +21,14 @@ public class TFTPserver {
   public static final int TFTPPORT = 8888;
   public static final int BUFSIZE = 516;
   public static final String READDIR = Paths.get("./read").toString() + "/"; 
-  public static final String WRITEDIR = "./TFTP-server/write/"; //custom address at your PC
+  public static final String WRITEDIR = Paths.get("./write").toString() + "/";
   // OP codes 
   public static final int OP_RRQ = 1;
   public static final int OP_WRQ = 2;
   public static final int OP_DAT = 3;
   public static final int OP_ACK = 4;
   public static final int OP_ERR = 5;
+  List<byte[]> allData = new ArrayList<>();
 
   /**
    * .
@@ -87,8 +89,7 @@ public class TFTPserver {
               requestedFile.insert(0, READDIR);
               handleRQ(sendSocket, requestedFile.toString(), OP_RRQ);
             // Write request
-            } else {  
-                                 
+            } else {          
               requestedFile.insert(0, WRITEDIR);
               handleRQ(sendSocket,requestedFile.toString(),OP_WRQ);  
             }
@@ -160,6 +161,44 @@ public class TFTPserver {
   }
 
   /**
+  * Parse a given data package and return the 
+  * the data in a byte[]. Returns null if 
+  * something went wrong.
+   */
+  private List<byte[]> parseDataPackage(byte[] data) {
+    List<byte[]> parsed = new ArrayList<>();
+    ByteBuffer buf = ByteBuffer.wrap(data);
+    short opcode = buf.getShort();
+    short block = buf.getShort();
+
+    // Check if correct datapackage.
+    if (opcode == OP_DAT && block >= 1) {
+      System.out.println("\nOpcode: " + opcode
+                    +  "\nBlock number: " + block);
+
+      parsed.add(Arrays.copyOfRange(data, 2, 3));
+      parsed.add(block);
+      System.out.println("BLOCK: " + parsed.get(0));
+
+      // Parse for the data
+      for (int i = 4; i < data.length; i++) {
+        if (data[i] == 0) {
+          parsed.add(Arrays.copyOfRange(data, 4, i));
+          System.out.println("DATA: " + new String(parsed.get(1)));
+
+          return parsed;
+        }
+      }
+      parsed.add(Arrays.copyOfRange(data, 4, data.length));
+      return parsed;
+    }
+    // Return null if something went wrong.
+    System.out.println("Not a correct datapackage.");
+    return null;
+  }
+
+
+  /**
    * Handles RRQ and WRQ requests.
    * 
    * @param sendSocket (socket used to send/receive packets)
@@ -178,11 +217,12 @@ public class TFTPserver {
         if (allData.length > 512) {
           int index = 0;
           for (int i = 0; i < allData.length; i++) {
-            if (i % 512 == 0) {
-              splitData.add(Arrays.copyOfRange(allData, index, i));
-              index += 512;
-            }
+            if (i % 512 == 0 && i != 0) {
+              splitData.add(Arrays.copyOfRange(allData, (i - 512), (i)));
+              index = i;
+            } 
           }
+          splitData.add(Arrays.copyOfRange(allData, index, allData.length));
         } else {
           splitData.add(0, allData);
         }
@@ -199,12 +239,43 @@ public class TFTPserver {
             System.out.println("Oh no its stupid.");
           }
         }
-        // byte[] p = createDataResponsePacket(allData, OP_DAT, 1);
-        // send_Data_receive_Ack(sendSocket, p);
+
       }
       
     } else if (opcode == OP_WRQ) {
-      boolean result = receive_Data_send_Ack();
+      // Send the write req ack.
+      byte[] ack = createAckResponsePacket(OP_ACK, 0);
+      try {
+        sendSocket.send(new DatagramPacket(ack, ack.length));
+      } catch (IOException e) {
+        System.out.println("Failed to send packet! Idiot...");
+      }
+
+      // Recieve datapackets. 
+      boolean result = true;
+      
+      while (result) {
+        result = receive_Data_send_Ack(sendSocket, allData);
+        System.out.println(allData.get(0).toString());
+        if (allData.get(allData.size() - 1).length < 512) {
+          System.out.println("All data packages recieved!:)");
+          break;
+        }
+      }
+
+      File w = new File(WRITEDIR + "test.txt");
+      try {
+        FileOutputStream fo = new FileOutputStream(w);
+        for (byte[] data : allData) {
+          fo.write(data);
+        }
+        fo.close();
+      } catch (FileNotFoundException e) {
+        System.out.println("File not found.");
+      } catch (IOException e) {
+        System.out.println("No bueno.");
+      }
+
     
     } else {
       System.err.println("Invalid request. Sending an error packet.");
@@ -242,19 +313,35 @@ public class TFTPserver {
    * return as byte[].
   */
   private byte[] createDataResponsePacket(byte[] data, int opcode, int block) {
-    if (data.length < 512 && opcode == OP_DAT) {
+    if (data.length <= 512 && opcode == OP_DAT) {
       ByteBuffer response = ByteBuffer.allocate(data.length + 4);
       response.putShort((byte)opcode)
               .putShort((byte)block)
               .put(data, 0, data.length);
       return response.array();
     }
-    System.out.println("Packet could not be created.");
+    System.out.println("Data packet could not be created.");
+    return null;
+  }
+
+  /**
+  * Create an ack-response package and 
+  * return this as byte[].
+  */
+  private byte[] createAckResponsePacket(int opcode, int block) {
+    System.out.println(opcode + " " +  block);
+    if (opcode == OP_ACK && block >= 0) {
+      ByteBuffer ack = ByteBuffer.allocate(4);
+      ack.putShort((byte)OP_ACK);
+      ack.putShort((byte)block);
+      return ack.array();
+    }
+    System.out.println("Ack-packet could not be created.");
     return null;
   }
   
   /**
-  To be implemented.
+  * Creates and sends a datapacket to the given socket. Recieves any ack.
   */
   private boolean send_Data_receive_Ack(DatagramSocket sendSocket, byte[] dataPackage) {
     try {
@@ -277,10 +364,43 @@ public class TFTPserver {
     return false;
   }
   
-  private boolean receive_Data_send_Ack() {
-    return true;
+  private boolean receive_Data_send_Ack(DatagramSocket recieveSocket, List<byte[]> data) {
+    try {
+      // Recieve data.
+      byte[] recievedData = new byte[BUFSIZE];
+      DatagramPacket dataPackage = new DatagramPacket(recievedData, recievedData.length);
+      recieveSocket.receive(dataPackage);
+      
+      // Check if correct datapackage.
+      List<byte[]> parsedData = parseDataPackage(recievedData);
+      System.out.println("block: " + new String(parsedData.get(0)));
+      System.out.println("majs" + new String(parsedData.get(1)));
+
+      if (parsedData != null) {
+        System.out.println("Data parsed.");
+
+        int block = ByteBuffer.wrap(parsedData.get(0)).getInt();
+        
+        System.out.println("majs" + new String(parsedData.get(1)));
+        
+        allData.add(parsedData.get(1));
+
+        System.out.println("Data added, hopefully.");
+        // Send ack with block number.
+        byte[] ack = createAckResponsePacket(OP_ACK, block);
+        recieveSocket.send(new DatagramPacket(ack, ack.length));
+        System.out.println("Ack sent!");
+        return true;
+      }
+    } catch (IndexOutOfBoundsException e) {
+      System.out.println("Index out of bounds: " + e);
+    } catch (IOException e) {
+      System.out.println("IOException: " + e);
+    }
+    System.out.println("Something went wrong.");
+    return false;
   }
-  
+
   private void send_Err() {
 
   }
